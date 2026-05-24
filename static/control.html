@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Slideshow Switcher</title>
+<style>
+  :root {
+    --bg:#15161a; --panel:#1f2127; --edge:#34373f;
+    --ink:#e6e7ea; --dim:#7c8089; --glow:#f0a23c;   /* warm tube-amp amber */
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body {
+    margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:ui-monospace, Menlo, Consolas, monospace;
+    user-select:none; -webkit-user-select:none;
+  }
+  body { display:flex; flex-direction:column; }
+  header {
+    padding:14px 20px; display:flex; justify-content:space-between;
+    align-items:center; border-bottom:1px solid var(--edge);
+    font-size:13px; letter-spacing:.18em; text-transform:uppercase;
+  }
+  header .dot { color:var(--dim); }
+  header .dot.live { color:var(--glow); }
+  header .right { display:flex; gap:16px; align-items:center; }
+  #fullscreen-btn {
+    background:none; border:1px solid var(--edge); color:var(--dim);
+    padding:6px 12px; border-radius:6px; font-size:11px;
+    letter-spacing:.12em; cursor:pointer; transition:all .15s;
+  }
+  #fullscreen-btn:active { transform:scale(.95); }
+  #fullscreen-btn:hover { border-color:var(--glow); color:var(--glow); }
+
+  #grid {
+    flex:1; display:grid; gap:14px; padding:14px;
+    grid-template-columns:repeat(2, 1fr);
+    grid-auto-rows:1fr;
+  }
+  .tile {
+    position:relative; border:1px solid var(--edge); border-radius:10px;
+    background:var(--panel) center/cover no-repeat; overflow:hidden;
+    transition:transform .06s ease, border-color .12s ease;
+  }
+  .tile:active { transform:scale(.985); }
+  .tile.active { border-color:var(--glow); box-shadow:0 0 0 2px var(--glow), 0 0 28px -6px var(--glow); }
+  .tile .label {
+    position:absolute; left:0; right:0; bottom:0;
+    padding:10px 14px; font-size:14px; letter-spacing:.06em;
+    background:linear-gradient(transparent, rgba(0,0,0,.82));
+  }
+  .tile .badge {
+    position:absolute; top:10px; right:12px; font-size:11px;
+    color:var(--glow); opacity:0; transition:opacity .12s;
+    letter-spacing:.14em;
+  }
+  .tile.active .badge { opacity:1; }
+  .tile .count { color:var(--dim); font-size:11px; }
+
+  #msg {
+    flex:1; display:flex; align-items:center; justify-content:center;
+    color:var(--dim); font-size:14px; letter-spacing:.06em; text-align:center;
+    padding:24px;
+  }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+  <header>
+    <span>Slideshow Switcher</span>
+    <div class="right">
+      <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶ FULLSCREEN</button>
+      <span id="status" class="dot">connecting</span>
+    </div>
+  </header>
+  <div id="grid" class="hidden"></div>
+  <div id="msg">loading slideshows…</div>
+
+<script>
+const grid   = document.getElementById("grid");
+const msg    = document.getElementById("msg");
+const status = document.getElementById("status");
+let activeId = null;
+
+// Fullscreen toggle
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(err => {
+      console.log("Fullscreen request failed:", err);
+    });
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    }
+  }
+}
+
+function setActive(id) {
+  activeId = id;
+  document.querySelectorAll(".tile").forEach(t =>
+    t.classList.toggle("active", t.dataset.id === id));
+}
+
+async function select(id) {
+  setActive(id);   // optimistic; WS broadcast will confirm
+  try {
+    await fetch(`/api/select/${encodeURIComponent(id)}`, { method:"POST" });
+  } catch (_) { /* WS state will correct things if this failed */ }
+}
+
+async function loadGrid() {
+  let shows;
+  try {
+    shows = await (await fetch("/api/slideshows")).json();
+  } catch (_) {
+    msg.textContent = "cannot reach laptop";
+    return;
+  }
+  if (!shows.length) {
+    msg.textContent = "no slideshows found — add image folders to /slideshows";
+    return;
+  }
+  grid.innerHTML = "";
+  for (const s of shows) {
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.dataset.id = s.id;
+    tile.style.backgroundImage = `url("${s.images[0]}")`;
+    tile.innerHTML =
+      `<div class="badge">on air</div>` +
+      `<div class="label">${s.name}` +
+      `<span class="count"> · ${s.images.length} slides</span></div>`;
+    tile.addEventListener("click", () => select(s.id));
+    grid.appendChild(tile);
+  }
+  msg.classList.add("hidden");
+  grid.classList.remove("hidden");
+  if (activeId) setActive(activeId);
+}
+
+// --- WebSocket: keeps the active tile in sync across controllers ---
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen    = () => { status.textContent = "online"; status.classList.add("live"); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "select") setActive(m.show.id);
+  };
+  ws.onclose = () => {
+    status.textContent = "reconnecting"; status.classList.remove("live");
+    setTimeout(connect, 1500);
+  };
+  ws.onerror = () => ws.close();
+}
+
+loadGrid();
+connect();
+</script>
+</body>
+</html>

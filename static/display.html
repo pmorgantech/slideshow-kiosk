@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Display</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden;
+    cursor: none;                       /* hide pointer on the TV */
+  }
+  .layer {
+    position: fixed; inset: 0;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: #000;
+    opacity: 0;
+  }
+  .layer.front { opacity: 1; }          /* instant cut: no transition */
+  #idle {
+    position: fixed; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    color: #2b2b2b; font: 300 2.5vw/1 ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: .15em; text-transform: uppercase;
+  }
+  #fs-prompt {
+    position: fixed; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    color: #555; font: 300 1.5vw/1 ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: .1em; text-transform: uppercase;
+    cursor: pointer; z-index: 10;
+  }
+</style>
+</head>
+<body>
+  <div id="a" class="layer"></div>
+  <div id="b" class="layer"></div>
+  <div id="idle">waiting for selection</div>
+  <div id="fs-prompt">tap to go fullscreen</div>
+
+<script>
+const layers = [document.getElementById("a"), document.getElementById("b")];
+const idle = document.getElementById("idle");
+const fsPrompt = document.getElementById("fs-prompt");
+
+function enterFullscreen() {
+  document.documentElement.requestFullscreen().then(() => {
+    fsPrompt.style.display = "none";
+  }).catch(() => {});
+}
+
+// Try immediately (works when launched via --kiosk or with autoplay policy).
+document.documentElement.requestFullscreen().then(() => {
+  fsPrompt.style.display = "none";
+}).catch(() => {
+  // Browser blocked it — show a tap target and try again on first interaction.
+  document.addEventListener("click", enterFullscreen, { once: true });
+  document.addEventListener("keydown", enterFullscreen, { once: true });
+});
+
+document.addEventListener("fullscreenchange", () => {
+  fsPrompt.style.display = document.fullscreenElement ? "none" : "flex";
+});
+
+let images = [];      // current slideshow image URLs
+let idx = 0;          // index of slide on screen
+let front = 0;        // which layer is currently visible
+let timer = null;     // auto-advance interval
+
+// Swap to image[i] using the hidden layer (decode first => no white flash).
+async function show(i) {
+  if (!images.length) return;
+  idx = ((i % images.length) + images.length) % images.length;
+  const back = 1 - front;
+  const probe = new Image();
+  probe.src = images[idx];
+  try { await probe.decode(); } catch (_) { /* show anyway */ }
+  layers[back].style.backgroundImage = `url("${images[idx]}")`;
+  layers[back].classList.add("front");
+  layers[front].classList.remove("front");
+  front = back;
+  preload(idx + 1);   // get the next one ready
+}
+
+function preload(i) {
+  if (!images.length) return;
+  const n = ((i % images.length) + images.length) % images.length;
+  new Image().src = images[n];
+}
+
+function startSlideshow(show_, advanceSeconds) {
+  if (timer) clearInterval(timer);
+  images = show_.images || [];
+  idx = 0;
+  idle.style.display = images.length ? "none" : "flex";
+  if (!images.length) return;
+  show(0);
+  timer = setInterval(() => show(idx + 1), advanceSeconds * 1000);
+}
+
+// --- WebSocket with auto-reconnect ---
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "select") startSlideshow(msg.show, msg.advance);
+  };
+  ws.onclose = () => setTimeout(connect, 1500);   // laptop sleep / server restart
+  ws.onerror = () => ws.close();
+}
+connect();
+</script>
+</body>
+</html>
