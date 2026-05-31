@@ -63,10 +63,12 @@ document.addEventListener("fullscreenchange", () => {
   fsPrompt.style.display = document.fullscreenElement ? "none" : "flex";
 });
 
-let images = [];      // current slideshow image URLs
-let idx = 0;          // index of slide on screen
-let front = 0;        // which layer is currently visible
-let timer = null;     // auto-advance interval
+let images  = [];      // current slideshow image URLs
+let idx     = 0;       // index of slide on screen
+let front   = 0;       // which layer is currently visible
+let timer   = null;    // auto-advance interval
+let advSecs = 5;       // seconds per slide (updated from server)
+let paused  = false;
 
 // Swap to image[i] using the hidden layer (decode first => no white flash).
 async function show(i) {
@@ -91,12 +93,20 @@ function preload(i) {
 
 function startSlideshow(show_, advanceSeconds) {
   if (timer) clearInterval(timer);
-  images = show_.images || [];
-  idx = 0;
+  paused  = false;
+  advSecs = advanceSeconds;
+  images  = show_.images || [];
+  idx     = 0;
   idle.style.display = images.length ? "none" : "flex";
   if (!images.length) return;
   show(0);
-  timer = setInterval(() => show(idx + 1), advanceSeconds * 1000);
+  timer = setInterval(() => show(idx + 1), advSecs * 1000);
+}
+
+function restartTimer() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (!paused && images.length) timer = setInterval(() => show(idx + 1), advSecs * 1000);
 }
 
 // --- WebSocket with auto-reconnect ---
@@ -104,7 +114,28 @@ function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === "select") startSlideshow(msg.show, msg.advance);
+    if (msg.type === "select") {
+      startSlideshow(msg.show, msg.advance);
+    } else if (msg.type === "prev") {
+      show(idx - 1);
+      restartTimer();
+    } else if (msg.type === "next") {
+      show(idx + 1);
+      restartTimer();
+    } else if (msg.type === "pause") {
+      paused = true;
+      if (timer) { clearInterval(timer); timer = null; }
+    } else if (msg.type === "resume") {
+      paused = false;
+      restartTimer();
+    } else if (msg.type === "idle") {
+      if (timer) { clearInterval(timer); timer = null; }
+      paused = false;
+      images = [];
+      layers[0].classList.remove("front");
+      layers[1].classList.remove("front");
+      idle.style.display = "flex";
+    }
   };
   ws.onclose = () => setTimeout(connect, 1500);   // laptop sleep / server restart
   ws.onerror = () => ws.close();

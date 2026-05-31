@@ -45,23 +45,66 @@
   .tile:active { transform:scale(.985); }
   .tile.active { border-color:var(--glow); box-shadow:0 0 0 2px var(--glow), 0 0 28px -6px var(--glow); }
   .tile .label {
-    position:absolute; left:0; right:0; bottom:0;
-    padding:10px 14px; font-size:14px; letter-spacing:.06em;
-    background:linear-gradient(transparent, rgba(0,0,0,.82));
+    position:absolute; left:0; bottom:0;
+    padding:7px 12px; line-height:1.35;
+    background:rgba(0,0,0,.72);
+    border-radius:0 10px 0 0;
   }
+  .tile .name { font-size:20px; letter-spacing:.06em; }
   .tile .badge {
     position:absolute; top:10px; right:12px; font-size:11px;
     color:var(--glow); opacity:0; transition:opacity .12s;
     letter-spacing:.14em;
   }
   .tile.active .badge { opacity:1; }
-  .tile .count { color:var(--dim); font-size:11px; }
+  .tile .count { color:var(--dim); font-size:17px; }
 
   #msg {
     flex:1; display:flex; align-items:center; justify-content:center;
     color:var(--dim); font-size:14px; letter-spacing:.06em; text-align:center;
     padding:24px;
   }
+
+  /* Player view */
+  #player {
+    flex:1; display:flex; flex-direction:column;
+    padding:28px 14px 24px;
+  }
+  #np-info {
+    flex:1; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:10px;
+  }
+  #np-label {
+    font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--dim);
+  }
+  #np-name {
+    font-size:88px; letter-spacing:.03em; color:var(--glow);
+    text-align:center; word-break:break-word; padding:0 12px;
+    line-height:1.1;
+  }
+  #ctrl-row {
+    display:flex; gap:10px; margin-bottom:0;
+  }
+  .ctrl-btn {
+    flex:1; height:88px; background:var(--panel);
+    border:1px solid var(--edge); border-radius:12px;
+    color:var(--ink); font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:30px; cursor:pointer; transition:all .1s;
+  }
+  .ctrl-btn:active { transform:scale(.94); }
+  .ctrl-btn:hover { border-color:var(--glow); color:var(--glow); }
+  .ctrl-btn.paused { border-color:var(--glow); color:var(--glow); }
+  #back-btn {
+    width:100%; height:70px; margin-top:48px; background:none;
+    border:2px solid var(--ink); border-radius:10px;
+    color:var(--ink); font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:18px; letter-spacing:.16em; text-transform:uppercase;
+    cursor:pointer; transition:all .12s;
+  }
+  #back-btn:active { transform:scale(.98); background:var(--edge); }
+  #back-btn:hover { border-color:var(--glow); color:var(--glow); }
+
   .hidden { display:none !important; }
 </style>
 </head>
@@ -69,29 +112,45 @@
   <header>
     <span>Slideshow Switcher</span>
     <div class="right">
-      <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶ FULLSCREEN</button>
+      <button id="fullscreen-btn" onclick="toggleFullscreen()">&#9638; FULLSCREEN</button>
       <span id="status" class="dot">connecting</span>
     </div>
   </header>
   <div id="grid" class="hidden"></div>
-  <div id="msg">loading slideshows…</div>
+  <div id="msg">loading slideshows&hellip;</div>
+  <div id="player" class="hidden">
+    <div id="np-info">
+      <div id="np-label">now playing</div>
+      <div id="np-name"></div>
+    </div>
+    <div id="ctrl-row">
+      <button class="ctrl-btn" id="btn-prev" onclick="prevSlide()">&lt;</button>
+      <button class="ctrl-btn" id="btn-pause" onclick="togglePause()">||</button>
+      <button class="ctrl-btn" id="btn-next" onclick="nextSlide()">&gt;</button>
+    </div>
+    <button id="back-btn" onclick="backToMenu()">&#8592; back</button>
+  </div>
 
 <script>
-const grid   = document.getElementById("grid");
-const msg    = document.getElementById("msg");
-const status = document.getElementById("status");
-let activeId = null;
+const grid     = document.getElementById("grid");
+const msg      = document.getElementById("msg");
+const status   = document.getElementById("status");
+const player   = document.getElementById("player");
+const npName   = document.getElementById("np-name");
+const pauseBtn = document.getElementById("btn-pause");
 
-// Fullscreen toggle
+let activeId    = null;
+let isPaused    = false;
+let shows       = [];
+let currentShow = null;
+
 function toggleFullscreen() {
   if (!document.fullscreenElement) {
     document.documentElement.requestFullscreen().catch(err => {
       console.log("Fullscreen request failed:", err);
     });
   } else {
-    if (document.exitFullscreen) {
-      document.exitFullscreen();
-    }
+    if (document.exitFullscreen) document.exitFullscreen();
   }
 }
 
@@ -101,15 +160,63 @@ function setActive(id) {
     t.classList.toggle("active", t.dataset.id === id));
 }
 
+function enterPlayer(show) {
+  currentShow = show;
+  npName.textContent = show.name;
+  isPaused = false;
+  pauseBtn.textContent = "||";
+  pauseBtn.classList.remove("paused");
+  grid.classList.add("hidden");
+  msg.classList.add("hidden");
+  player.classList.remove("hidden");
+  setActive(show.id);
+}
+
+function backToMenu() {
+  player.classList.add("hidden");
+  if (shows.length) {
+    grid.classList.remove("hidden");
+  } else {
+    msg.classList.remove("hidden");
+  }
+}
+
 async function select(id) {
-  setActive(id);   // optimistic; WS broadcast will confirm
+  if (id === activeId && currentShow) {
+    // Already playing — re-open player view without restarting the display
+    enterPlayer(currentShow);
+    return;
+  }
+  const show = shows.find(s => s.id === id);
+  if (show) enterPlayer(show);
   try {
-    await fetch(`/api/select/${encodeURIComponent(id)}`, { method:"POST" });
-  } catch (_) { /* WS state will correct things if this failed */ }
+    await fetch(`/api/select/${encodeURIComponent(id)}`, { method: "POST" });
+  } catch (_) {}
+}
+
+async function prevSlide() {
+  try { await fetch("/api/prev", { method: "POST" }); } catch (_) {}
+}
+
+async function nextSlide() {
+  try { await fetch("/api/next", { method: "POST" }); } catch (_) {}
+}
+
+async function togglePause() {
+  if (isPaused) {
+    isPaused = false;
+    pauseBtn.textContent = "||";
+    pauseBtn.classList.remove("paused");
+    try { await fetch("/api/resume", { method: "POST" }); } catch (_) {}
+  } else {
+    isPaused = true;
+    pauseBtn.textContent = "▶";
+    pauseBtn.classList.add("paused");
+    try { await fetch("/api/pause", { method: "POST" }); } catch (_) {}
+  }
 }
 
 async function loadGrid() {
-  let shows;
   try {
     shows = await (await fetch("/api/slideshows")).json();
   } catch (_) {
@@ -128,23 +235,37 @@ async function loadGrid() {
     tile.style.backgroundImage = `url("${s.images[0]}")`;
     tile.innerHTML =
       `<div class="badge">on air</div>` +
-      `<div class="label">${s.name}` +
-      `<span class="count"> · ${s.images.length} slides</span></div>`;
+      `<div class="label">` +
+      `<div class="name">${s.name}</div>` +
+      `<div class="count">${s.images.length} slides</div>` +
+      `</div>`;
     tile.addEventListener("click", () => select(s.id));
     grid.appendChild(tile);
   }
-  msg.classList.add("hidden");
-  grid.classList.remove("hidden");
+  if (player.classList.contains("hidden")) {
+    msg.classList.add("hidden");
+    grid.classList.remove("hidden");
+  }
   if (activeId) setActive(activeId);
 }
 
-// --- WebSocket: keeps the active tile in sync across controllers ---
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen    = () => { status.textContent = "online"; status.classList.add("live"); };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.type === "select") setActive(m.show.id);
+    if (m.type === "select") {
+      enterPlayer(m.show);
+    } else if (m.type === "idle") {
+      currentShow = null;
+      activeId    = null;
+      document.querySelectorAll(".tile").forEach(t => t.classList.remove("active"));
+      if (!player.classList.contains("hidden")) {
+        player.classList.add("hidden");
+        if (shows.length) grid.classList.remove("hidden");
+        else              msg.classList.remove("hidden");
+      }
+    }
   };
   ws.onclose = () => {
     status.textContent = "reconnecting"; status.classList.remove("live");

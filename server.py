@@ -113,6 +113,38 @@ async def api_select(show_id: str):
     return {"ok": True, "selected": show_id}
 
 
+@app.post("/api/stop")
+async def api_stop():
+    global current_selection
+    current_selection = None
+    await broadcast({"type": "idle"})
+    return {"ok": True}
+
+
+@app.post("/api/prev")
+async def api_prev():
+    await broadcast({"type": "prev"})
+    return {"ok": True}
+
+
+@app.post("/api/next")
+async def api_next():
+    await broadcast({"type": "next"})
+    return {"ok": True}
+
+
+@app.post("/api/pause")
+async def api_pause():
+    await broadcast({"type": "pause"})
+    return {"ok": True}
+
+
+@app.post("/api/resume")
+async def api_resume():
+    await broadcast({"type": "resume"})
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -121,6 +153,8 @@ async def ws_endpoint(ws: WebSocket):
     shows = {s["id"]: s for s in list_slideshows()}
     if current_selection in shows:
         await ws.send_json(select_message(shows[current_selection]))
+    else:
+        await ws.send_json({"type": "idle"})
     try:
         while True:
             await ws.receive_text()   # no inbound messages expected; keeps socket open
